@@ -1,6 +1,6 @@
 # Brigades de Tokyo
 
-- `index.html` : version multi-appareils (Supabase), publiée par Cloudflare Pages.
-- `one_device/index.html` : version un seul appareil (sans réseau), accessible sur `/one_device/`.
+- `public/index.html` : version multi-appareils (Supabase).
+- `public/one_device/index.html` : version un seul appareil (sans réseau), sur `/one_device/`.
 
-Chaque `git push` sur `main` redéploie le site.
+Seul le dossier `public/` est publié (voir `wrangler.jsonc`). Chaque `git push` sur `main` redéploie le site.
