@@ -731,10 +731,10 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     if (d.current !== null) {
       h += revealCard(d.players[d.current]);
     } else if (n < total16()) {
-      h += '<label for="playerName">Prénom (facultatif)</label>' +
+      h += '<label for="playerName">Prénom ou pseudo (obligatoire)</label>' +
         '<div class="field"><input id="playerName" type="text" maxlength="24" autocomplete="off" placeholder="Sert à la révélation finale" value="' + esc(nameDraft) + '"><span class="hanko" aria-hidden="true"></span></div>' +
-        '<div class="actions stack"><button class="btn gold big" data-act="draw" data-kind="adult"' + (d.adult.length ? '' : ' disabled') + '><span class="mon"></span><span>Sac des adultes</span><span class="chev">›</span></button>' +
-        '<button class="btn gold big" data-act="draw" data-kind="child"' + (d.child.length ? '' : ' disabled') + '><span class="mon mon-b"></span><span>Sac des enfants</span><span class="chev">›</span></button></div>';
+        '<div class="actions stack"><button class="btn gold big" data-act="draw" data-kind="adult"' + (d.adult.length && nameDraft.trim() ? '' : ' disabled') + '><span class="mon"></span><span>Sac des adultes</span><span class="chev">›</span></button>' +
+        '<button class="btn gold big" data-act="draw" data-kind="child"' + (d.child.length && nameDraft.trim() ? '' : ' disabled') + '><span class="mon mon-b"></span><span>Sac des enfants</span><span class="chev">›</span></button></div>';
     } else {
       h += '<div class="notice">Tirage terminé. Chaque commissaire se présente à voix haute, puis la partie peut commencer. Lance la partie quand tout le monde est prêt : le minuteur de ' + durLabel(state.gameMs) + ' démarre et l’onglet Points s’ouvrira à la fin du temps.</div>' + (state.endAt ? '' : '<div class="actions">' + startBtn() + '</div>');
     }
@@ -1007,7 +1007,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
       case 'tab': notice = a === 'tab' && d.v === 'points' ? '' : notice; state.tab = d.v; commit(); break;
       case 'draw':
         var dr = state.draw;
-        if (dr.current !== null || !dr[d.kind].length) return;
+        if (dr.current !== null || !dr[d.kind].length || !nameDraft.trim()) return;
         var slot = dr[d.kind].shift();
         dr.players.push({ n: dr.players.length + 1, kind: d.kind, name: nameDraft.trim(), team: slot.team, role: slot.role });
         if (slot.role === 'Commissaire') {
@@ -1120,7 +1120,10 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     act(b.getAttribute('data-act'), b.dataset);
   });
   root.addEventListener('input', function (ev) {
-    if (ev.target.id === 'playerName') nameDraft = ev.target.value;
+    if (ev.target.id === 'playerName') {
+      nameDraft = ev.target.value; var okN = !!nameDraft.trim();
+      Array.prototype.forEach.call(root.querySelectorAll('[data-act="draw"]'), function (bt) { bt.disabled = !(okN && state.draw[bt.getAttribute('data-kind')].length); });
+    }
     var m = /^codeIn-(term|buy)$/.exec(ev.target.id || '');
     if (m) { cD[m[1]] = ev.target.value.replace(/\D/g, '').slice(0, 4); if (ev.target.value !== cD[m[1]]) ev.target.value = cD[m[1]]; }
   });
@@ -1137,7 +1140,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     setTimeout(function () {
       var a = document.activeElement;
       if (!(a && a.tagName === 'INPUT' && root.contains(a))) render();
-    }, 60);
+    }, 450);
   });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) unlockAudio(); });
   document.addEventListener('click', unlockAudio, true);
