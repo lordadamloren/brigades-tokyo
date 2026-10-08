@@ -482,6 +482,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     return '</p><div class="qrbox"><p class="dtxt">Ou scanne ce QR code avec ton téléphone : il te connecte directement à ta brigade.</p>' + qrSvg(url) + '</div><p class="dtxt" style="margin:0">';
   }
   var NETMSG = 'Connexion impossible : réessaie dans un instant.';
+  var WERR = { not_started: 'La partie n’a pas encore commencé.', closed: 'La partie est terminée : plus d’enregistrement possible. Signale-le à l’organisateur.', too_late: 'Trop tard pour corriger (90 secondes maximum après l’enregistrement). Signale-le à l’organisateur, qui ajuste les points.', forbidden: 'Opération non autorisée depuis un appareil de brigade. Signale-le à l’organisateur.', bills: 'Pas assez de billets.', bad_args: 'Valeur refusée.' };
   function rpc(fn, args) {
     var t0 = Date.now(), ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     var to = ctl ? setTimeout(function () { ctl.abort(); }, 8000) : null;
@@ -502,9 +503,9 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     mut++;
     rpc(fn, args).then(function (r) {
       mut++; netOk(true);
-      if (r.d && r.d.reset) { onReset(); return; }
-      onOk(r.d, r);
-    }, function (e) { mut++; netOk(!!(e && e.http)); if (onErr) onErr(e); });
+      if (r.d && r.d.reset) { busy = false; onReset(); return; }
+      try { onOk(r.d, r); } catch (ex) { busy = false; ierr = 'Erreur inattendue : réessaie.'; render(); }
+    }, function (e) { mut++; netOk(!!(e && e.http)); busy = false; if (onErr) onErr(e); });
   }
   function applyTimer(t, recv) {
     var sig = [t.started, t.paused, t.end_at, t.pause_left, t.game_ms].join('|');
@@ -522,6 +523,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     scheduleGame();
     return true;
   }
+  function remainingMs() { return state.endAt ? (state.paused ? state.pauseLeft : Math.max(0, state.endAt - Date.now())) : state.gameMs; }
   function mTimer(action, delta) {
     wr('master_timer', { p_room: MP.room, p_mt: MP.mt, p_action: action, p_delta: delta || 0 }, function (t, r) {
       applyTimer(t, r.recv); ierr = ''; commit();
@@ -558,8 +560,11 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     state.buys = d.buys.map(function (b) { return { sid: b.id, team: T, level: b.level, cost: b.cost }; });
     state.score[T].bills = d.bills;
   }
+  var lastPoll = 0;
   function poll() {
     if (polling || !MP.mode) return;
+    if (document.hidden && MP.mode === 'brigade' && Date.now() - lastPoll < 15000) return;
+    lastPoll = Date.now();
     if (MP.mode === 'brigade' && !MP.tok) return;
     var m0 = mut; polling = true;
     while (clickQ > 0) { clickQ--; sendClick(); }
@@ -895,7 +900,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     var started = !!state.endAt, live = started && locked(), expired = started && !locked();
     h += '<section class="card"><h2>Minuteur général</h2><p class="lead">' + (started ? (expired ? 'Le temps est écoulé.' : 'Le compte à rebours est affiché sous les onglets.') : 'Durée prévue : ' + durLabel(state.gameMs) + '. Le minuteur démarre quand tu lances la partie, une fois tous les rôles tirés.') + '</p>' + (started ? '' : '<div class="actions">' + startBtn() + '</div>');
     if (!expired) {
-      h += '<div class="actions"><button class="btn small ghost" data-act="gAdj" data-d="-900000"' + (!started && state.gameMs <= 900000 ? ' disabled' : '') + '>− 15 min</button><button class="btn small ghost" data-act="gAdj" data-d="900000">+ 15 min</button>' +
+      h += '<div class="actions"><button class="btn small ghost" data-act="gAdj" data-d="-900000"' + ((!started && state.gameMs <= 900000) || (started && !expired && remainingMs() <= 900000) ? ' disabled' : '') + '>− 15 min</button><button class="btn small ghost" data-act="gAdj" data-d="900000">+ 15 min</button>' +
         (live ? '<button class="btn small" data-act="gPause">' + (state.paused ? 'Reprendre' : 'Mettre en pause') + '</button>' + armBtn('endTimer', 'Terminer le temps', 'small ghost') : '') + '</div>';
     }
     h += '</section><div class="actions">' + armBtn('resetAll', 'Relancer une partie') + '</div>';
@@ -971,7 +976,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     }
     h += '<div class="score"><div><strong>Points pour ' + T.name + '</strong><small class="lead" style="display:block">5 au maximum</small></div>' +
       '<div class="stepper"><button data-act="eprPts" data-d="-1"' + (e.pts <= 0 ? ' disabled' : '') + ' aria-label="Retirer un point">−</button><output>' + e.pts + '</output><button data-act="eprPts" data-d="1"' + (e.pts >= 5 ? ' disabled' : '') + ' aria-label="Ajouter un point">+</button></div></div>' +
-      '<div class="actions"><button class="btn team" data-act="eprValidate">Enregistrer l’épreuve</button><button class="btn ghost" data-act="eprCancel">Annuler</button></div></section>';
+      '<div class="actions"><button class="btn team' + (armed === 'eprValidate' ? ' warn' : '') + '" data-act="eprValidate">' + (armed === 'eprValidate' ? 'Confirmer ?' : 'Enregistrer l’épreuve') + '</button><button class="btn ghost" data-act="eprCancel">Annuler</button></div></section>';
     return h;
   }
 
@@ -1048,9 +1053,8 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     if (!state.buys.length) h += '<p class="lead">Aucun achat pour l’instant.</p>';
     else h += '<ul class="log">' + state.buys.map(function (p, i) { return [p, i]; }).reverse().map(function (pair) {
       var p = pair[0], i = pair[1];
-      return '<li><span>' + TEAMS[p.team].name + ' · niveau ' + p.level + ' · <strong class="val">' + plural(p.cost, 'billet') + '</strong></span>' +
-        '<button class="btn small ghost" data-act="buyDel" data-i="' + i + '" aria-label="Annuler cet achat et rendre les billets">×</button></li>';
-    }).join('') + '</ul><p class="lead" style="margin-top:8px">La croix annule l’achat et rend les billets.</p>';
+      return '<li><span>' + TEAMS[p.team].name + ' · niveau ' + p.level + ' · <strong class="val">' + plural(p.cost, 'billet') + '</strong></span>' + '</li>';
+    }).join('') + '</ul><p class="lead" style="margin-top:8px">Un achat n’est pas remboursable. En cas d’erreur, l’organisateur ajuste les billets.</p>';
     return h + '</section>';
   }
 
@@ -1203,7 +1207,12 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
       case 'gAdj':
         if (state.endAt && !state.paused && Date.now() >= state.endAt) return;
         mTimer('adjust', Number(d.d)); break;
-      case 'resolve': if (confirm2('resolve')) { state.resolved = true; animTotals = true; commit(); } break;
+      case 'resolve':
+        if (!confirm2('resolve') || busy) break;
+        busy = true;
+        wr('master_resolve', { p_room: MP.room, p_mt: MP.mt }, function () { busy = false; ierr = ''; state.resolved = true; animTotals = true; commit(); },
+          function () { busy = false; ierr = NETMSG; render(); });
+        break;
       case 'termOpen': state.term = { open: true, team: '' }; termOk = ''; cD.term = ''; cE.term = ''; commit(); break;
       case 'termTeam': state.term.team = d.t; termOk = ''; cD.term = ''; cE.term = ''; commit(); break;
       case 'termCode': if (codeOk('term', state.term.team)) { termOk = state.term.team; cD.term = ''; } render(); break;
@@ -1226,12 +1235,13 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
       case 'eprSoja': e.ended = true; commit(); break;
       case 'eprValidate':
         if (!e.from || !e.id || busy) return;
+        if (!confirm2('eprValidate')) break;
         busy = true;
         var vId = e.id, vPts = e.pts;
         wr('add_trial', { p_room: MP.room, p_tok: MP.tok, p_epr: vId, p_pts: vPts }, function (res) {
           busy = false;
           if (res.err === 'dup') { ierr = 'Cette épreuve a déjà été jouée par ta brigade.'; state.epr = freshEpr(); timerReset(); }
-          else if (res.err) ierr = 'Enregistrement refusé.';
+          else if (res.err) ierr = WERR[res.err] || 'Enregistrement refusé.';
           else {
             ierr = '';
             notice = 'Épreuve enregistrée : ' + vPts + ' point' + (vPts > 1 ? 's' : '') + ' pour ' + TEAMS[MP.team].name + '. Les brigades peuvent maintenant mettre en cause un infiltré.';
@@ -1251,8 +1261,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
         busy = true;
         wr('add_buy', { p_room: MP.room, p_tok: MP.tok, p_level: state.buy.level }, function (res) {
           busy = false;
-          if (res.err === 'bills') ierr = 'Pas assez de billets.';
-          else if (res.err) ierr = 'Achat refusé.';
+          if (res.err) ierr = WERR[res.err] || 'Achat refusé.';
           else { ierr = ''; state.buy.paid = true; bsc.bills = res.bills; }
           poll(); commit();
         }, function () { busy = false; ierr = NETMSG; render(); });
@@ -1262,21 +1271,21 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
         var bp = state.buys[Number(d.i)];
         if (bp && bp.sid && !busy) {
           busy = true;
-          wr('del_buy', { p_room: MP.room, p_tok: MP.tok, p_id: bp.sid }, function () { busy = false; poll(); }, function () { busy = false; ierr = NETMSG; render(); });
+          wr('del_buy', { p_room: MP.room, p_tok: MP.tok, p_id: bp.sid }, function (res) { busy = false; ierr = res && res.err ? (WERR[res.err] || 'Refusé.') : ''; poll(); commit(); }, function () { busy = false; ierr = NETMSG; render(); });
         }
         break;
       case 'buyCopy':
         try {
           navigator.clipboard.writeText(CLUES_URL).then(function () {
             copied = true; render(); setTimeout(function () { copied = false; softRender(); }, 2000);
-          }, function () {});
+          }, function () { notice = 'Copie impossible : sélectionne le lien affiché.'; render(); });
         } catch (e) { /* le lien reste visible et sélectionnable */ }
         break;
       case 'trialDel':
         var tr = state.trials[Number(d.i)];
         if (tr && tr.sid && !busy) {
           busy = true;
-          wr('del_trial', { p_room: MP.room, p_tok: MP.tok, p_id: tr.sid }, function () { busy = false; poll(); }, function () { busy = false; ierr = NETMSG; render(); });
+          wr('del_trial', { p_room: MP.room, p_tok: MP.tok, p_id: tr.sid }, function (res) { busy = false; ierr = res && res.err ? (WERR[res.err] || 'Refusé.') : ''; poll(); commit(); }, function () { busy = false; ierr = NETMSG; render(); });
         }
         break;
       case 'timerStart': timerStart(); break;
@@ -1377,7 +1386,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     setTimeout(function () {
       var a = document.activeElement;
       if (!(a && a.tagName === 'INPUT' && root.contains(a))) render();
-    }, 60);
+    }, 450);
   });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) { unlockAudio(); poll(); } });
   document.addEventListener('click', unlockAudio, true);
