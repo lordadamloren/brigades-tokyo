@@ -538,8 +538,8 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
   function onReset(msg) {
     if (MP.mode === 'brigade') { MP.tok = ''; saveMP(); }
     state = fresh(); tsig = ''; psig = ''; busy = false; cancelAlarm('game'); timerReset();
-    joinMsg = msg || 'La partie a été relancée par l’organisateur. Rejoins-la avec le nouveau code de ta brigade.';
-    jd.room = MP.room; jd.code = ''; commit();
+    joinMsg = msg || 'La partie a été relancée par l’organisateur, dans une nouvelle salle. Scanne ton nouveau QR code, ou saisis le nouveau code de salle et le nouveau code de ta brigade.';
+    jd.room = ''; jd.code = ''; commit();
   }
   function applyMaster(d) {
     devCount = d.devices || devCount;
@@ -1293,12 +1293,17 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
       case 'resetAll':
         if (confirm2('resetAll')) {
           wr('master_reset', { p_room: MP.room, p_mt: MP.mt }, function (t, r) {
+            var rmsg = '';
+            rpc('create_game', {}).then(function (n) { MP.room = n.d.room; MP.mt = n.d.mt; saveMP(); doRst(); },
+              function () { rmsg = 'La nouvelle salle n’a pas pu être créée : l’ancienne reste active.'; doRst(); });
+            function doRst() {
             var kc = state.cfg;
             state = fresh(); state.cfg = kc; state.draw = newDraw(kc);
             cD = { term: '', buy: '' }; cE = { term: '', buy: '' }; cdUntil = { S: 0, G: 0 }; termOk = ''; codesOpen = '';
             nameDraft = ''; notice = ''; ierr = ''; revealOpen = false; copied = false; gBeeped = false; animTotals = false; pendingRender = false;
             tsig = ''; psig = ''; devCount = { S: 0, G: 0 };
-            cancelAlarm('game'); timerReset(); applyTimer(t, r.recv); commit();
+            cancelAlarm('game'); timerReset(); applyTimer(t, r.recv); ierr = rmsg; mut++; commit();
+            }
           }, function () { ierr = NETMSG; render(); });
         } break;
       case 'pickMaster':
