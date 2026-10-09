@@ -447,12 +447,12 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
       score: { S: blank(), G: blank() }, last: '', buy: { team: '', level: 0, paid: false }, buys: [],
       codes: { S: '', G: '' }, endAt: 0, gameMs: 9000000, paused: false, pauseLeft: 0, resolved: false, term: { open: false, team: '' },
       epr: freshEpr(), cards: { quiz: [], nanana: [], pictionary: [], mime: [] },
-      acc: { sel: 0, res: null }, members: [], accus: [], accLeft: 0, infOn: false, srvAcc: [], rosterN: 0
+      acc: { sel: 0, res: null }, members: [], accus: [], accLeft: 0, infOn: false, hasRoster: false, srvAcc: [], rosterN: 0
     };
   }
   var storageOk = true;
   function load() {
-    try { var raw = localStorage.getItem(KEY); if (raw) { var o = JSON.parse(raw); if (o && o.draw && o.score) { o.buys = o.buys || []; o.buy = o.buy || { team: '', level: 0, paid: false }; o.cfg = o.cfg || { a: 8, k: 8, inf: 1 }; o.clicks = o.clicks || { S: { term: 0, buy: 0 }, G: { term: 0, buy: 0 } }; o.codes = o.codes || { S: '', G: '' }; o.endAt = o.endAt || 0; o.gameMs = o.gameMs || 9000000; o.paused = !!o.paused; o.pauseLeft = o.pauseLeft || 0; o.resolved = !!o.resolved; o.term = o.term || { open: false, team: '' }; o.acc = o.acc || { sel: 0, res: null }; o.members = o.members || []; o.accus = o.accus || []; o.accLeft = o.accLeft || 0; o.infOn = !!o.infOn; o.srvAcc = o.srvAcc || []; o.rosterN = o.rosterN || 0; return o; } } }
+    try { var raw = localStorage.getItem(KEY); if (raw) { var o = JSON.parse(raw); if (o && o.draw && o.score) { o.buys = o.buys || []; o.buy = o.buy || { team: '', level: 0, paid: false }; o.cfg = o.cfg || { a: 8, k: 8, inf: 1 }; o.clicks = o.clicks || { S: { term: 0, buy: 0 }, G: { term: 0, buy: 0 } }; o.codes = o.codes || { S: '', G: '' }; o.endAt = o.endAt || 0; o.gameMs = o.gameMs || 9000000; o.paused = !!o.paused; o.pauseLeft = o.pauseLeft || 0; o.resolved = !!o.resolved; o.term = o.term || { open: false, team: '' }; o.acc = o.acc || { sel: 0, res: null }; o.members = o.members || []; o.accus = o.accus || []; o.accLeft = o.accLeft || 0; o.infOn = !!o.infOn; o.hasRoster = !!o.hasRoster; o.srvAcc = o.srvAcc || []; o.rosterN = o.rosterN || 0; return o; } } }
     catch (e) { storageOk = false; }
     return null;
   }
@@ -582,14 +582,14 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     });
     if (state.codes.S && state.codes.G && (d.codes.S !== state.codes.S || d.codes.G !== state.codes.G)) pushCodes();
     state.srvAcc = d.accus || []; state.rosterN = d.roster_n || 0;
-    if (state.draw.players.length === total16() && state.draw.current === null && state.rosterN !== state.draw.players.length && !state.endAt) pushRoster();
+    if (state.draw.players.length === total16() && state.draw.current === null && state.rosterN !== state.draw.players.length) pushRoster();
   }
   function applyBrigade(d) {
     var T = MP.team;
     state.trials = d.trials.map(function (t) { return { sid: t.id, from: other(T), to: T, id: t.epr, pts: t.pts }; });
     state.buys = d.buys.map(function (b) { return { sid: b.id, team: T, level: b.level, cost: b.cost }; });
     state.score[T].bills = d.bills;
-    state.members = d.members || []; state.accus = d.accus || []; state.accLeft = d.left || 0; state.infOn = !!d.inf;
+    state.members = d.members || []; state.accus = d.accus || []; state.accLeft = d.left || 0; state.infOn = !!d.inf; state.hasRoster = !!d.roster;
   }
   var lastPoll = 0;
   function poll() {
@@ -1026,8 +1026,10 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     }).join('') + '</ul></section>';
   }
   function accuseCard() {
-    if (MP.mode !== 'brigade' || !state.infOn) return '';
+    if (MP.mode !== 'brigade') return '';
     var T = TEAMS[MP.team], O = TEAMS[other(MP.team)], a = state.acc, h = '', i, m;
+    if (!state.hasRoster) return '<section class="card"><h2>Mettre en cause un agent</h2><p class="lead">La liste des agents n’a pas encore été transmise par le terminal de tirage. Ouvre la page du terminal (ou recharge-la) : la liste s’enverra toute seule.</p></section>';
+    if (!state.infOn) return '<section class="card"><h2>Mettre en cause un agent</h2><p class="lead">Il n’y a aucun infiltré dans cette partie : il n’y a personne à mettre en cause.</p></section>';
     if (a.res) {
       var mole = a.res.result === 'mole';
       return '<section class="card clue ' + T.cls + '"><h2>Résultat du vote</h2><p><strong>' + esc(a.res.name) + '</strong> ' +
@@ -1312,7 +1314,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
           else if (res.err) ierr = WERR[res.err] || 'Enregistrement refusé.';
           else {
             ierr = '';
-            notice = 'Épreuve enregistrée : ' + vPts + ' point' + (vPts > 1 ? 's' : '') + ' pour ' + TEAMS[MP.team].name + '. Ta brigade peut maintenant mettre en cause un agent (carte plus bas).';
+            notice = 'Épreuve enregistrée : ' + vPts + ' point' + (vPts > 1 ? 's' : '') + ' pour ' + TEAMS[MP.team].name + '.' + (state.infOn ? ' Ta brigade peut maintenant mettre en cause un agent (carte plus bas).' : '');
             state.epr = freshEpr(); timerReset();
           }
           poll(); commit();
