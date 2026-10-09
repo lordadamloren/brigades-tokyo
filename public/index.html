@@ -446,12 +446,13 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
       tab: 'tirage', cfg: { a: 8, k: 8, inf: 1 }, clicks: { S: { term: 0, buy: 0 }, G: { term: 0, buy: 0 } }, draw: newDraw({ a: 8, k: 8, inf: 1 }), trials: [],
       score: { S: blank(), G: blank() }, last: '', buy: { team: '', level: 0, paid: false }, buys: [],
       codes: { S: '', G: '' }, endAt: 0, gameMs: 9000000, paused: false, pauseLeft: 0, resolved: false, term: { open: false, team: '' },
-      epr: freshEpr(), cards: { quiz: [], nanana: [], pictionary: [], mime: [] }
+      epr: freshEpr(), cards: { quiz: [], nanana: [], pictionary: [], mime: [] },
+      acc: { sel: 0, res: null }, members: [], accus: [], accLeft: 0, infOn: false, srvAcc: [], rosterN: 0
     };
   }
   var storageOk = true;
   function load() {
-    try { var raw = localStorage.getItem(KEY); if (raw) { var o = JSON.parse(raw); if (o && o.draw && o.score) { o.buys = o.buys || []; o.buy = o.buy || { team: '', level: 0, paid: false }; o.cfg = o.cfg || { a: 8, k: 8, inf: 1 }; o.clicks = o.clicks || { S: { term: 0, buy: 0 }, G: { term: 0, buy: 0 } }; o.codes = o.codes || { S: '', G: '' }; o.endAt = o.endAt || 0; o.gameMs = o.gameMs || 9000000; o.paused = !!o.paused; o.pauseLeft = o.pauseLeft || 0; o.resolved = !!o.resolved; o.term = o.term || { open: false, team: '' }; return o; } } }
+    try { var raw = localStorage.getItem(KEY); if (raw) { var o = JSON.parse(raw); if (o && o.draw && o.score) { o.buys = o.buys || []; o.buy = o.buy || { team: '', level: 0, paid: false }; o.cfg = o.cfg || { a: 8, k: 8, inf: 1 }; o.clicks = o.clicks || { S: { term: 0, buy: 0 }, G: { term: 0, buy: 0 } }; o.codes = o.codes || { S: '', G: '' }; o.endAt = o.endAt || 0; o.gameMs = o.gameMs || 9000000; o.paused = !!o.paused; o.pauseLeft = o.pauseLeft || 0; o.resolved = !!o.resolved; o.term = o.term || { open: false, team: '' }; o.acc = o.acc || { sel: 0, res: null }; o.members = o.members || []; o.accus = o.accus || []; o.accLeft = o.accLeft || 0; o.infOn = !!o.infOn; o.srvAcc = o.srvAcc || []; o.rosterN = o.rosterN || 0; return o; } } }
     catch (e) { storageOk = false; }
     return null;
   }
@@ -502,7 +503,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     return '</p><div class="qrbox"><p class="dtxt">Ou scanne ce QR code avec ton téléphone : il te connecte directement à ta brigade.</p>' + qrSvg(url) + '</div><p class="dtxt" style="margin:0">';
   }
   var NETMSG = 'Connexion impossible : réessaie dans un instant.';
-  var WERR = { not_started: 'La partie n’a pas encore commencé.', closed: 'La partie est terminée : plus d’enregistrement possible. Signale-le à l’organisateur.', too_late: 'Trop tard pour corriger (90 secondes maximum après l’enregistrement). Signale-le à l’organisateur, qui ajuste les points.', forbidden: 'Opération non autorisée depuis un appareil de brigade. Signale-le à l’organisateur.', bills: 'Pas assez de billets.', bad_args: 'Valeur refusée.' };
+  var WERR = { not_started: 'La partie n’a pas encore commencé.', closed: 'La partie est terminée : plus d’enregistrement possible.', too_late: 'Trop tard pour corriger (90 secondes maximum après l’enregistrement). Une correction pourra être faite au décompte final.', forbidden: 'Opération non autorisée depuis un appareil de brigade.', already: 'Cette personne a déjà été mise en cause.', no_accuse: 'Aucune mise en cause disponible : elle se débloque à chaque épreuve enregistrée.', bills: 'Pas assez de billets.', bad_args: 'Valeur refusée.' };
   function rpc(fn, args) {
     var t0 = Date.now(), ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     var to = ctl ? setTimeout(function () { ctl.abort(); }, 8000) : null;
@@ -563,6 +564,13 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     joinMsg = msg || 'La partie a été relancée par l’organisateur, dans une nouvelle salle. Scanne ton nouveau QR code, ou saisis le nouveau code de salle et le nouveau code de ta brigade.';
     jd.room = ''; jd.code = ''; commit();
   }
+  var pushingR = false, rosterTry = 0;
+  function pushRoster() {
+    if (MP.mode !== 'master' || pushingR || rosterTry > 6) return;
+    pushingR = true;
+    rpc('master_set_roster', { p_room: MP.room, p_mt: MP.mt, p_players: state.draw.players.map(function (p) { return { n: p.n, name: p.name, team: p.team, role: p.role }; }) })
+      .then(function (r) { pushingR = false; if (r.d && r.d.err) rosterTry++; else rosterTry = 0; }, function () { pushingR = false; });
+  }
   function applyMaster(d) {
     devCount = d.devices || devCount;
     state.trials = d.trials.map(function (t) { return { sid: t.id, from: other(t.team), to: t.team, id: t.epr, pts: t.pts }; });
@@ -573,12 +581,15 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
       state.clicks[t].term = d.clicks[t];
     });
     if (state.codes.S && state.codes.G && (d.codes.S !== state.codes.S || d.codes.G !== state.codes.G)) pushCodes();
+    state.srvAcc = d.accus || []; state.rosterN = d.roster_n || 0;
+    if (state.draw.players.length === total16() && state.draw.current === null && state.rosterN !== state.draw.players.length && !state.endAt) pushRoster();
   }
   function applyBrigade(d) {
     var T = MP.team;
     state.trials = d.trials.map(function (t) { return { sid: t.id, from: other(T), to: T, id: t.epr, pts: t.pts }; });
     state.buys = d.buys.map(function (b) { return { sid: b.id, team: T, level: b.level, cost: b.cost }; });
     state.score[T].bills = d.bills;
+    state.members = d.members || []; state.accus = d.accus || []; state.accLeft = d.left || 0; state.infOn = !!d.inf;
   }
   var lastPoll = 0;
   function poll() {
@@ -739,15 +750,19 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
   function trialPts(t) {
     return state.trials.reduce(function (a, x) { return a + (x.to === t ? x.pts : 0); }, 0);
   }
-  function teamSize(t) { return state.draw.players.filter(function (p) { return p.team === t; }).length; }
+  function unmaskedN(n) { return (state.srvAcc || []).some(function (a) { return a.n === n && a.result === 'mole'; }); }
+  function teamSize(t) { return state.draw.players.filter(function (p) { return (unmaskedN(p.n) ? other(p.team) : p.team) === t; }).length; }
+  function infTotal(t) { return state.draw.players.filter(function (p) { return p.role === 'Infiltré' && p.team === other(t); }).length; }
+  function unmCount(t) { return state.draw.players.filter(function (p) { return p.role === 'Infiltré' && p.team === other(t) && unmaskedN(p.n); }).length; }
+  function wrongCount(t) { return (state.srvAcc || []).filter(function (a) { return a.team === t && a.result === 'innocent'; }).length; }
   function lastCounts() { return !!state.last && teamSize(state.last) <= teamSize(other(state.last)); }
   function parts(t) {
     var s = state.score[t];
     return {
       answers: s.answers * 10,
       last: state.last === t && lastCounts() ? 5 : 0,
-      infil: state.cfg.inf > 1 ? 5 * ((s.hid || 0) - (s.unm || 0)) : (s.infil === 'demasque' ? -5 : (s.infil === 'cache' ? 5 : 0)),
-      wrong: -2 * s.wrong,
+      infil: 5 * (infTotal(t) - 2 * unmCount(t)),
+      wrong: -2 * wrongCount(t),
       bills: s.bills,
       trials: trialPts(t),
       adj: s.adj
@@ -807,8 +822,8 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     return (h ? h + ' h' : '') + (h && m ? ' ' + ('0' + m).slice(-2) : (m ? m + ' min' : ''));
   }
   function startBtn() {
-    var d = state.draw, ready = d.players.length === total16() && d.current === null;
-    return '<button class="btn team team-s big" data-act="gStart"' + (ready ? '' : ' disabled') + '>' + (armed === 'gStart' ? 'Confirmer le lancement ?' : (ready ? 'Lancer la partie' : 'Lancer la partie (tirage en cours)')) + '</button>';
+    var d = state.draw, drawn = d.players.length === total16() && d.current === null, ready = drawn && state.rosterN === d.players.length;
+    return '<button class="btn team team-s big" data-act="gStart"' + (ready ? '' : ' disabled') + '>' + (armed === 'gStart' ? 'Confirmer le lancement ?' : (ready ? 'Lancer la partie' : (drawn ? 'Lancer la partie (synchronisation…)' : 'Lancer la partie (tirage en cours)'))) + '</button>';
   }
   function leftMs() { return state.paused ? state.pauseLeft : state.endAt - Date.now(); }
   function locked() { return !(state.endAt && !state.paused && Date.now() >= state.endAt); }
@@ -953,6 +968,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
         '<button class="btn small ghost" data-act="trialDel" data-i="' + i + '" aria-label="Supprimer cette épreuve">×</button></li>';
     }).join('') + '</ul>';
     h += '</section>';
+    h += accuseCard();
     return h;
   }
   function eprPanel(x, e) {
@@ -1000,6 +1016,42 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     return h;
   }
 
+  function playerName(n) { var r = state.draw.players.filter(function (p) { return p.n === n; })[0]; return r ? r.name : ('n° ' + n); }
+  function accJournal() {
+    var l = state.srvAcc || [];
+    if (!l.length) return '';
+    return '<section class="card"><h2>Mises en cause</h2><ul class="log">' + l.map(function (a) {
+      var mole = a.result === 'mole', p = state.draw.players.filter(function (q) { return q.n === a.n; })[0];
+      return '<li><span>' + TEAMS[a.team].name + ' met en cause <strong>' + esc(playerName(a.n)) + '</strong></span><span class="val ' + (mole ? 'pos' : 'neg') + '">' + (mole ? 'infiltré démasqué' + (p ? ' · rejoint ' + TEAMS[other(p.team)].name : '') : 'innocent') + '</span></li>';
+    }).join('') + '</ul></section>';
+  }
+  function accuseCard() {
+    if (MP.mode !== 'brigade' || !state.infOn) return '';
+    var T = TEAMS[MP.team], O = TEAMS[other(MP.team)], a = state.acc, h = '', i, m;
+    if (a.res) {
+      var mole = a.res.result === 'mole';
+      return '<section class="card clue ' + T.cls + '"><h2>Résultat du vote</h2><p><strong>' + esc(a.res.name) + '</strong> ' +
+        (mole ? 'était un infiltré de ' + O.name + '. Bien joué : il rejoint ' + O.name + ' et ' + O.name + ' perd 5 points.' : 'est innocent. Accusation mensongère : ' + T.name + ' perd 2 points.') +
+        '</p><div class="actions"><button class="btn small" data-act="accClose">OK</button></div></section>';
+    }
+    h = '<section class="card"><h2>Mettre en cause un agent</h2><p class="lead">Après le vote de ta brigade (ta voix compte double), désigne la personne soupçonnée d’être un infiltré. Une mise en cause par épreuve enregistrée. Disponibles : <strong>' + state.accLeft + '</strong>.</p>';
+    if (!state.members.length) h += '<p class="lead">Liste des agents indisponible pour l’instant.</p>';
+    else if (state.accLeft > 0) {
+      h += '<ul class="log">' + state.members.map(function (mm) {
+        return '<li><span>' + esc(mm.name) + (mm.done ? ' <small class="lead">(déjà mis en cause)</small>' : '') + '</span><button class="btn small' + (a.sel === mm.n ? '' : ' ghost') + '" data-act="accSel" data-n="' + mm.n + '"' + (mm.done ? ' disabled' : '') + '>' + (a.sel === mm.n ? 'Choisi' : 'Désigner') + '</button></li>';
+      }).join('') + '</ul>';
+      if (a.sel) {
+        m = state.members.filter(function (x) { return x.n === a.sel; })[0];
+        h += '<div class="actions">' + armBtn('accGo', 'Mettre en cause ' + (m ? esc(m.name) : ''), '') + '</div>';
+      }
+    }
+    if (state.accus.length) {
+      h += '<h3 style="margin:14px 0 6px">Déjà mis en cause</h3><ul class="log">' + state.accus.map(function (x) {
+        return '<li><span>' + esc(x.name) + '</span><span class="val ' + (x.result === 'mole' ? 'pos' : 'neg') + '">' + (x.result === 'mole' ? 'infiltré démasqué' : 'innocent') + '</span></li>';
+      }).join('') + '</ul>';
+    }
+    return h + '</section>';
+  }
   function stepper(team, key, val) {
     var lim = LIMITS[key];
     return '<div class="stepper"><button data-act="step" data-team="' + team + '" data-key="' + key + '" data-d="-1"' + (val <= lim[0] ? ' disabled' : '') + ' aria-label="Retirer">−</button>' +
@@ -1015,15 +1067,10 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     h += row('Bonnes réponses à l’enquête', '+10 chacune · <span class="val ' + cls(p.answers) + '">' + sgn(p.answers) + '</span>', stepper(t, 'answers', s.answers));
     h += row('Billets restants', '+1 par billet · <span class="val ' + cls(p.bills) + '">' + sgn(p.bills) + '</span>', stepper(t, 'bills', s.bills));
     h += row('Épreuves de loyauté', 'ajouté depuis l’onglet Épreuves', '<span class="val ' + cls(p.trials) + '">' + sgn(p.trials) + '</span>');
-    h += row('Accusations mensongères', '−2 chacune · <span class="val ' + cls(p.wrong) + '">' + sgn(p.wrong) + '</span>', stepper(t, 'wrong', s.wrong));
-    if (state.cfg.inf > 1) {
-      h += row('Infiltrés démasqués pour ' + T.name, '−5 chacun', stepper(t, 'unm', s.unm || 0));
-      h += row('Infiltrés restés cachés pour ' + T.name, '+5 chacun · ' + state.cfg.inf + ' en jeu', stepper(t, 'hid', s.hid || 0));
-    } else if (state.cfg.inf === 1) {
-      h += '<div class="row full"><div>Infiltré qui travaille pour ' + T.name + '<small>démasqué : −5 · resté caché jusqu’à la fin : +5</small></div>' +
-        '<div class="seg">' + [['jeu', 'En jeu'], ['demasque', 'Démasqué −5'], ['cache', 'Caché +5']].map(function (o) {
-        return '<button data-act="infil" data-team="' + t + '" data-v="' + o[0] + '" aria-pressed="' + (s.infil === o[0]) + '">' + o[1] + '</button>';
-      }).join('') + '</div></div>';
+    h += row('Accusations mensongères', '−2 chacune · automatique · <span class="val ' + cls(p.wrong) + '">' + sgn(p.wrong) + '</span>', '<span class="val">' + wrongCount(t) + '</span>');
+    if (infTotal(t) > 0) {
+      h += row('Infiltrés démasqués pour ' + T.name, '−5 chacun · automatique', '<span class="val">' + unmCount(t) + '</span>');
+      h += row('Infiltrés restés cachés pour ' + T.name, '+5 chacun · automatique · ' + infTotal(t) + ' en jeu', '<span class="val">' + (infTotal(t) - unmCount(t)) + '</span>');
     }
     h += row('Ajustement manuel', 'pour corriger une erreur', stepper(t, 'adj', s.adj));
     return h + '</article>';
@@ -1074,7 +1121,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
     else h += '<ul class="log">' + state.buys.map(function (p, i) { return [p, i]; }).reverse().map(function (pair) {
       var p = pair[0], i = pair[1];
       return '<li><span>' + TEAMS[p.team].name + ' · niveau ' + p.level + ' · <strong class="val">' + plural(p.cost, 'billet') + '</strong></span>' + '</li>';
-    }).join('') + '</ul><p class="lead" style="margin-top:8px">Un achat n’est pas remboursable. En cas d’erreur, l’organisateur ajuste les billets.</p>';
+    }).join('') + '</ul><p class="lead" style="margin-top:8px">Un achat n’est pas remboursable. En cas d’erreur, elle sera corrigée au décompte final.</p>';
     return h + '</section>';
   }
 
@@ -1092,6 +1139,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
       '<div class="seg">' + [['', 'Personne'], ['S', 'Shibuya'], ['G', 'Ginza']].map(function (o) {
         return '<button class="' + (o[0] ? TEAMS[o[0]].cls : '') + '" data-act="last" data-v="' + o[0] + '" aria-pressed="' + (state.last === o[0]) + '">' + o[1] + '</button>';
       }).join('') + '</div></div></section>';
+    h += accJournal();
     h += '<div class="teams">' + teamCard('S') + teamCard('G') + '</div>';
     h += '<section class="card"><h2>Fin de partie</h2><p class="lead">Une fois les réponses rendues, révèle les commissaires et les infiltrés.</p>';
     if (!revealOpen) {
@@ -1217,7 +1265,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
       case 'hide': state.draw.current = null; commit(); break;
       case 'endTimer': if (confirm2('endTimer')) { gBeeped = true; cancelAlarm('game'); playAlarm(3); mTimer('end', 0); } break;
       case 'gStart':
-        if (state.endAt || state.draw.players.length !== total16() || state.draw.current !== null) return;
+        if (state.endAt || state.draw.players.length !== total16() || state.draw.current !== null || state.rosterN !== state.draw.players.length) return;
         if (confirm2('gStart')) { gBeeped = false; playAlarm(1); mTimer('start', 0); } break;
       case 'gPause':
         if (!state.endAt) return;
@@ -1264,7 +1312,7 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
           else if (res.err) ierr = WERR[res.err] || 'Enregistrement refusé.';
           else {
             ierr = '';
-            notice = 'Épreuve enregistrée : ' + vPts + ' point' + (vPts > 1 ? 's' : '') + ' pour ' + TEAMS[MP.team].name + '. Les brigades peuvent maintenant mettre en cause un infiltré.';
+            notice = 'Épreuve enregistrée : ' + vPts + ' point' + (vPts > 1 ? 's' : '') + ' pour ' + TEAMS[MP.team].name + '. Ta brigade peut maintenant mettre en cause un agent (carte plus bas).';
             state.epr = freshEpr(); timerReset();
           }
           poll(); commit();
@@ -1315,7 +1363,20 @@ button.terminal{width:100%;text-align:left;font:inherit;cursor:pointer}
         s[d.key] = clamp(before + Number(d.d), lim[0], lim[1]);
         if (d.key === 'bills') s.badj = (s.badj || 0) + (s[d.key] - before);
         commit(); break;
-      case 'infil': state.score[d.team].infil = d.v; commit(); break;
+      case 'infil': break;
+      case 'accSel': state.acc.sel = state.acc.sel === Number(d.n) ? 0 : Number(d.n); armed = ''; commit(); break;
+      case 'accClose': state.acc.res = null; commit(); break;
+      case 'accGo':
+        if (!state.acc.sel || busy) return;
+        if (!confirm2('accGo')) break;
+        busy = true;
+        wr('accuse', { p_room: MP.room, p_tok: MP.tok, p_n: state.acc.sel }, function (res) {
+          busy = false; state.acc.sel = 0;
+          if (res.err) ierr = WERR[res.err] || 'Mise en cause refusée.';
+          else { ierr = ''; state.acc.res = { name: res.name, result: res.result, works_for: res.works_for }; }
+          poll(); commit();
+        }, function () { busy = false; ierr = NETMSG; render(); });
+        break;
       case 'last': state.last = d.v; commit(); break;
       case 'reveal': if (confirm2('reveal')) { revealOpen = true; render(); } break;
       case 'hideReveal': revealOpen = false; render(); break;
